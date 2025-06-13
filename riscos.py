@@ -663,7 +663,7 @@ def main():
                 xaxis_tickfont_size=14,
                 yaxis=dict(
                     title='Valor (milhões £)',
-                    titlefont_size=16,
+                    #titlefont_size=16,
                     tickfont_size=14,
                 ),
                 legend=dict(
