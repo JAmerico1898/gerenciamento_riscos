@@ -198,7 +198,7 @@ def plot_balance_sheet(ativos_liquidos_pct, wholesale_funding_pct):
         legend=dict(
             orientation="h",
             yanchor="bottom",
-            y=-0.2,
+            y=-0.3,
             xanchor="center",
             x=0.5
         ),
@@ -666,13 +666,17 @@ def main():
                     #titlefont_size=16,
                     tickfont_size=14,
                 ),
-                legend=dict(
-                    x=0,
-                    y=1.0,
-                    bgcolor='rgba(255, 255, 255, 0)',
-                    bordercolor='rgba(255, 255, 255, 0)'
-                ),
-                barmode='group',
+                
+            legend=dict(
+                x=1.02,
+                y=1,
+                xanchor='left',
+                yanchor='top',
+                bgcolor='rgba(255, 255, 255, 0)',
+                bordercolor='rgba(255, 255, 255, 0)'
+            ),
+            
+            barmode='group',
                 bargap=0.15,
                 bargroupgap=0.1,
                 height=500
@@ -745,6 +749,8 @@ def main():
                 delta_color="normal" if lcr_value >= 100 else "inverse"
             )
             st.markdown("Requerimento regulatório: >= 100%")
+            st.markdown("Premissas:")
+            st.markdown("(i) depósitos de varejo são estáveis; (ii) resgate de 30% dos depósitos de atacado")
         
         with col2:
             st.metric(
@@ -1425,12 +1431,12 @@ def main():
         
         # Configuração do banco
         st.markdown("### Configuração do Banco")
-        
+
         col1, col2, col3 = st.columns(3)
         
         with col1:
             ativos_liquidos_pct = st.slider("Ativos Líquidos (%)", 0, 100, 20)
-            hqla = st.slider("Dos quais são HQLA (£ milhões)", 0, 10000, 3000)
+            hqla = st.slider("Dos quais são HQLA (£ milhões)", 0, 20000, 3000)
         
         with col2:
             depositos_varejo = st.slider("Depósitos de Varejo (£ milhões)", 0, 50000, 15000)
