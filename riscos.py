@@ -432,7 +432,7 @@ def main():
             st.markdown("""
             **Fontes típicas de risco de liquidez:**
             - **Corridas bancárias**: Quando muitos depositantes retiram seus fundos simultaneamente
-            - **Perda de acesso ao mercado de funding**: Quando fontes atacadistas de financiamento secam
+            - **Perda de acesso ao mercado de funding**: Quando fontes de financiamento (depositantes) secam
             - **Deterioração da confiança no banco**: Pode levar a dificuldades de refinanciamento
             """)
             st.markdown("</div>", unsafe_allow_html=True)
@@ -449,7 +449,7 @@ def main():
         with col1:
             st.markdown("<div class='reference-box'>", unsafe_allow_html=True)
             st.markdown("""
-            #### Liquidez de Financiamento
+            #### Liquidez de Financiamento (Passivos)
             
             Refere-se à capacidade do banco de obter recursos para financiar seus ativos e atender suas obrigações.
             
@@ -463,7 +463,7 @@ def main():
         with col2:
             st.markdown("<div class='reference-box'>", unsafe_allow_html=True)
             st.markdown("""
-            #### Liquidez de Mercado
+            #### Liquidez de Mercado (Ativos)
             
             Refere-se à capacidade do banco de vender ativos rapidamente sem causar mudanças significativas em seus preços.
             
