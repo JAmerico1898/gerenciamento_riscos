@@ -1306,7 +1306,7 @@ def main():
                 st.markdown("</div>", unsafe_allow_html=True)
             
             with col2:
-                st.markdown("<div class='reference-box'>", unsafe_allow_html=True)
+                st.markdown("<div class='info-box'>", unsafe_allow_html=True)
                 st.markdown("""
                 #### Níveis típicos de um plano de contingência:
                 
