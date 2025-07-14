@@ -1,1 +1,1 @@
-# gereneciamento_riscos
+# gerenciamento_riscos
