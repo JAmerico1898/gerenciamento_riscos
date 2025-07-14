@@ -5,1230 +5,829 @@ import matplotlib.pyplot as plt
 import seaborn as sns
 from sklearn.model_selection import train_test_split
 from sklearn.linear_model import LogisticRegression
-import base64
-from io import BytesIO
-from sklearn.metrics import confusion_matrix, roc_curve, auc, classification_report, log_loss, precision_score, recall_score, f1_score
-import plotly.graph_objects as go
+from sklearn.metrics import accuracy_score, classification_report, confusion_matrix, roc_curve, auc
+from sklearn.preprocessing import StandardScaler
 import plotly.express as px
-from PIL import Image
+import plotly.graph_objects as go
 from plotly.subplots import make_subplots
+import warnings
+warnings.filterwarnings('ignore')
 
 # Configuração da página
 st.set_page_config(
-    page_title="Modelando o Risco de Crédito",
-    page_icon="💰",
+    page_title="Sistema de Modelagem de Risco de Crédito",
+    page_icon="💳",
     layout="wide"
 )
 
-# Título e descrição da aplicação
-st.title("Ferramenta Interativa de Modelagem do Risco de Crédito")
-st.markdown("""
-Esta ferramenta demonstra como funciona a modelagem de risco de crédito utilizando regressão logística.
-Você pode selecionar variáveis, treinar um modelo e analisar potenciais tomadores de empréstimo.
-""")
+# Título principal
+st.title("🏦 Sistema de Modelagem de Risco de Crédito")
+st.markdown("---")
+
+# Dicionário de variáveis e suas descrições
+variable_descriptions = {
+    'unnamed:0': 'Index',
+    'id': 'Identificação da operação de crédito',
+    'loan_amnt': 'Valor da operação de crédito',
+    'int_rate': 'Taxa de juros da operação de crédito',
+    'annual_inc': 'Renda anual do devedor da operação de crédito',
+    'dti': 'Razão entre os pagamentos mensais de operações de crédito pelo devedor da operação de crédito e a renda do devedor da operação de crédito',
+    'delinq_2yrs': 'Número de atrasos superiores a 30 dias no histórico de pagamentos do devedor da operação de crédito, ocorridos nos últimos 2 anos',
+    'fico_range_low': 'Credit scoring do devedor da operação de crédito no momento da originação da operação de crédito',
+    'grade_A': 'True, se classificação de risco "A" atribuída ao devedor da operação de crédito. False, otherwise',
+    'grade_B': 'True, classificação de risco "B" atribuída ao devedor da operação de crédito. False, otherwise',
+    'grade_C': 'True, classificação de risco "C" atribuída ao devedor da operação de crédito. False, otherwise',
+    'grade_D': 'True, classificação de risco "D" atribuída ao devedor da operação de crédito. False, otherwise',
+    'grade_E': 'True, classificação de risco "E" atribuída ao devedor da operação de crédito. False, otherwise',
+    'grade_F': 'True, classificação de risco "F" atribuída ao devedor da operação de crédito. False, otherwise',
+    'grade_G': 'True, classificação de risco "G" atribuída ao devedor da operação de crédito. False, otherwise',
+    'loan_status': 'Status atual da operação de crédito: operação de crédito em dia (loan_status = 0); operação de crédito em atraso (loan_status = 1)'
+}
 
 # Função para carregar dados
 @st.cache_data
 def load_data():
-    # Em uma aplicação real, substitua estes pelos caminhos dos arquivos reais
     try:
-        training_sample = pd.read_csv('training_sample.csv')
-        testing_sample = pd.read_csv('testing_sample.csv')
-        return training_sample, testing_sample
-    except:
-        # Dados de demonstração para quando os arquivos não estiverem disponíveis
-        st.warning("Usando dados de demonstração. Em produção, conecte-se a conjuntos de dados reais.")
-        # Criar dados sintéticos de treinamento
-        np.random.seed(42)
-        n_training = 250000
-        n_testing = 20000
-        
-        # Características
-        loan_amnt = np.random.uniform(1000, 35000, n_training)
-        int_rate = np.random.uniform(5, 25, n_training)
-        annual_inc = np.random.uniform(20000, 150000, n_training)
-        dti = np.random.uniform(0, 40, n_training)  # relação dívida-renda
-        delinq_2yrs = np.random.poisson(0.5, n_training)
-        fico_range_low = np.random.normal(700, 50, n_training).astype(int)
-        
-        # Variáveis dummy de grau (codificação one-hot)
-        grade_probs = [0.30, 0.25, 0.20, 0.15, 0.05, 0.03, 0.02]  # Distribuição de probabilidade
-        grades = np.random.choice(['A', 'B', 'C', 'D', 'E', 'F', 'G'], n_training, p=grade_probs)
-        grade_A = (grades == 'A').astype(int)
-        grade_B = (grades == 'B').astype(int)
-        grade_C = (grades == 'C').astype(int)
-        grade_D = (grades == 'D').astype(int)
-        grade_E = (grades == 'E').astype(int)
-        grade_F = (grades == 'F').astype(int)
-        grade_G = (grades == 'G').astype(int)
-        
-        # Gerar loan_status (variável alvo) com relação realista com as características
-        # FICO mais alto, valor do empréstimo menor, taxa de juros menor, renda maior = menor probabilidade de inadimplência
-        logit = -5 + 0.00005 * loan_amnt + 0.1 * int_rate - 0.00001 * annual_inc + 0.05 * dti + \
-                0.5 * delinq_2yrs - 0.01 * fico_range_low + 0 * grade_A + 0.2 * grade_B + \
-                0.5 * grade_C + 0.8 * grade_D + 1.1 * grade_E + 1.4 * grade_F + 1.7 * grade_G
-        
-        prob_default = 1 / (1 + np.exp(-logit))
-        loan_status = np.random.binomial(1, prob_default)
-        
-        # Garantir proporção de 80% bem-sucedidos, 20% inadimplentes reamostrando
-        successful_indices = np.where(loan_status == 0)[0]
-        default_indices = np.where(loan_status == 1)[0]
-        
-        target_successful_count = int(0.8 * n_training)
-        target_default_count = n_training - target_successful_count
-        
-        if len(successful_indices) > target_successful_count:
-            successful_indices = np.random.choice(successful_indices, target_successful_count, replace=False)
-        else:
-            # Precisa criar mais empréstimos bem-sucedidos
-            additional_needed = target_successful_count - len(successful_indices)
-            loan_status[np.random.choice(default_indices, additional_needed, replace=False)] = 0
-            successful_indices = np.where(loan_status == 0)[0]
-            default_indices = np.where(loan_status == 1)[0]
-        
-        if len(default_indices) > target_default_count:
-            default_indices = np.random.choice(default_indices, target_default_count, replace=False)
-        else:
-            # Precisa criar mais inadimplentes
-            additional_needed = target_default_count - len(default_indices)
-            loan_status[np.random.choice(successful_indices, additional_needed, replace=False)] = 1
-        
-        # Criar DataFrame
-        training_sample = pd.DataFrame({
-            'id': range(1, n_training + 1),
-            'loan_amnt': loan_amnt,
-            'int_rate': int_rate,
-            'annual_inc': annual_inc,
-            'dti': dti,
-            'delinq_2yrs': delinq_2yrs,
-            'fico_range_low': fico_range_low,
-            'grade_A': grade_A,
-            'grade_B': grade_B,
-            'grade_C': grade_C,
-            'grade_D': grade_D,
-            'grade_E': grade_E,
-            'grade_F': grade_F,
-            'grade_G': grade_G,
-            'loan_status': loan_status
-        })
-        
-        # Criar amostra de teste (estrutura similar mas sem loan_status)
-        # Usar as mesmas distribuições mas amostras aleatórias diferentes
-        loan_amnt_test = np.random.uniform(1000, 35000, n_testing)
-        int_rate_test = np.random.uniform(5, 25, n_testing)
-        annual_inc_test = np.random.uniform(20000, 150000, n_testing)
-        dti_test = np.random.uniform(0, 40, n_testing)
-        delinq_2yrs_test = np.random.poisson(0.5, n_testing)
-        fico_range_low_test = np.random.normal(700, 50, n_testing).astype(int)
-        
-        grades_test = np.random.choice(['A', 'B', 'C', 'D', 'E', 'F', 'G'], n_testing, p=grade_probs)
-        grade_A_test = (grades_test == 'A').astype(int)
-        grade_B_test = (grades_test == 'B').astype(int)
-        grade_C_test = (grades_test == 'C').astype(int)
-        grade_D_test = (grades_test == 'D').astype(int)
-        grade_E_test = (grades_test == 'E').astype(int)
-        grade_F_test = (grades_test == 'F').astype(int)
-        grade_G_test = (grades_test == 'G').astype(int)
-        
-        testing_sample = pd.DataFrame({
-            'id': range(1, n_testing + 1),
-            'loan_amnt': loan_amnt_test,
-            'int_rate': int_rate_test,
-            'annual_inc': annual_inc_test,
-            'dti': dti_test,
-            'delinq_2yrs': delinq_2yrs_test,
-            'fico_range_low': fico_range_low_test,
-            'grade_A': grade_A_test,
-            'grade_B': grade_B_test,
-            'grade_C': grade_C_test,
-            'grade_D': grade_D_test,
-            'grade_E': grade_E_test,
-            'grade_F': grade_F_test,
-            'grade_G': grade_G_test
-        })
-        
-        return training_sample, testing_sample
+        training_data = pd.read_csv('training_sample.csv')
+        production_data = pd.read_csv('production_sample.csv')
+        return training_data, production_data
+    except FileNotFoundError:
+        st.error("Arquivos CSV não encontrados. Certifique-se de que 'training_sample.csv' e 'production_sample.csv' estão no diretório correto.")
+        return None, None
 
-# Carregar dados
-training_sample, testing_sample = load_data()
-
-# Exibir visão geral dos dados
-with st.expander("Visão Geral dos Dados"):
-    st.subheader("Base de Treinamento")
-    st.write(f"Dimensões: {training_sample.shape}")
+# Função para plotar a curva S da regressão logística
+def plot_sigmoid_curve(model, X_train, y_train, selected_features):
+    fig = make_subplots(
+        rows=1, cols=2,
+        subplot_titles=['Curva S Teórica da Regressão Logística', 'Distribuição de Probabilidades por Classe'],
+        column_widths=[0.5, 0.5]
+    )
     
-    # Estilização do DataFrame usando Pandas
-    def style_table(df):
-        df = df.reset_index(drop=True)
-
-        # Criar lista de nomes de colunas para as colunas 2 a 8
-        columns_to_format = df.columns[2:8]
-
-        return (
-            df.style
-            .set_table_styles(
-                [{
-                    'selector': 'thead th',
-                    'props': [('font-weight', 'bold'),
-                            ('border-style', 'solid'),
-                            ('border-width', '0px 0px 2px 0px'),
-                            ('border-color', 'black')]
-                }, {
-                    'selector': 'thead th:not(:first-child)',
-                    'props': [('text-align', 'center')]  # Centralizar todos os cabeçalhos exceto o primeiro
-                }, {
-                    'selector': 'thead th:last-child',
-                    'props': [('color', 'black')]  # Fazer o cabeçalho da última coluna preto
-                }, {
-                    'selector': 'td',
-                    'props': [('border-style', 'solid'),
-                            ('border-width', '0px 0px 1px 0px'),
-                            ('border-color', 'black'),
-                            ('text-align', 'center')]
-                }, {
-                    'selector': 'th',
-                    'props': [('border-style', 'solid'),
-                            ('border-width', '0px 0px 1px 0px'),
-                            ('border-color', 'black'),
-                            ('text-align', 'left')]
-                }]
-            )
-            .set_properties(**{'padding': '2px', 'font-size': '15px'})
-            .format({col: "{:.2f}" for col in columns_to_format})  # Formatar colunas para 2 casas decimais
-        )
-
-    # Exibindo no Streamlit
-    def main():
-        styled_html = style_table(training_sample.head()).to_html(index=False, escape=False)
-        centered_html = f'''
-        <div style="display: flex; justify-content: left;">
-            {styled_html}
-        '''  # Fechar corretamente a tag div
-        st.markdown(centered_html, unsafe_allow_html=True)
-
-    if __name__ == '__main__':
-        main()
+    # Gráfico 1: Curva S teórica
+    # Criar uma curva sigmóide teórica baseada na combinação linear
+    X_scaled = (X_train - X_train.mean()) / X_train.std()
+    linear_combination = np.dot(X_scaled, model.coef_.T) + model.intercept_
     
+    # Criar um range mais amplo para mostrar melhor a curva S
+    min_val = linear_combination.min() - 2
+    max_val = linear_combination.max() + 2
+    x_range = np.linspace(min_val, max_val, 300)
     
-    st.subheader("Base de Validação")
-    st.write(f"Dimensões: {testing_sample.shape}")
-
-    # Estilização do DataFrame usando Pandas
-    def style_table(df):
-        df = df.reset_index(drop=True)
-
-        # Criar lista de nomes de colunas para as colunas 2 a 8
-        columns_to_format = df.columns[2:8]
-
-        return (
-            df.style
-            .set_table_styles(
-                [{
-                    'selector': 'thead th',
-                    'props': [('font-weight', 'bold'),
-                            ('border-style', 'solid'),
-                            ('border-width', '0px 0px 2px 0px'),
-                            ('border-color', 'black')]
-                }, {
-                    'selector': 'thead th:not(:first-child)',
-                    'props': [('text-align', 'center')]  # Centralizar todos os cabeçalhos exceto o primeiro
-                }, {
-                    'selector': 'thead th:last-child',
-                    'props': [('color', 'black')]  # Fazer o cabeçalho da última coluna preto
-                }, {
-                    'selector': 'td',
-                    'props': [('border-style', 'solid'),
-                            ('border-width', '0px 0px 1px 0px'),
-                            ('border-color', 'black'),
-                            ('text-align', 'center')]
-                }, {
-                    'selector': 'th',
-                    'props': [('border-style', 'solid'),
-                            ('border-width', '0px 0px 1px 0px'),
-                            ('border-color', 'black'),
-                            ('text-align', 'left')]
-                }]
-            )
-            .set_properties(**{'padding': '2px', 'font-size': '15px'})
-            .format({col: "{:.2f}" for col in columns_to_format})  # Formatar colunas para 2 casas decimais
-        )
-
-    # Exibindo no Streamlit
-    def main():
-        styled_html = style_table(testing_sample.head()).to_html(index=False, escape=False)
-        centered_html = f'''
-        <div style="display: flex; justify-content: left;">
-            {styled_html}
-        '''  # Fechar corretamente a tag div
-        st.markdown(centered_html, unsafe_allow_html=True)
-
-    if __name__ == '__main__':
-        main()
-
+    # Aplicar função sigmóide: p = 1 / (1 + exp(-x))
+    y_sigmoid = 1 / (1 + np.exp(-x_range))
     
-    # Exibir distribuição de classes
-    st.subheader("Distribuição de Classes nos Dados de Treinamento")
-    fig, ax = plt.subplots(figsize=(6, 4))
-    class_counts = training_sample['loan_status'].value_counts()
-    ax.bar(['Pago (0)', 'Inadimplente (1)'], class_counts.values)
-    ax.set_ylabel('Contagem')
-    ax.set_title('Distribuição do Status do Empréstimo')
-    ax.spines['top'].set_visible(False)
-    ax.spines['right'].set_visible(False)
-    for i, v in enumerate(class_counts.values):
-        ax.text(i, v + 3000, f"{v} ({v/len(training_sample)*100:.1f}%)", ha='center')
-    col1, col2, col3 = st.columns([1, 5, 1])
-    with col2:
-        st.pyplot(fig)        
+    fig.add_trace(
+        go.Scatter(
+            x=x_range,
+            y=y_sigmoid,
+            mode='lines',
+            name='Curva Sigmóide',
+            line=dict(color='blue', width=3),
+            showlegend=False
+        ),
+        row=1, col=1
+    )
+    
+    # Adicionar pontos dos dados reais para contexto
+    real_probabilities = 1 / (1 + np.exp(-linear_combination.flatten()))
+    
+    # Amostrar pontos para não sobrecarregar o gráfico
+    sample_size = min(1000, len(linear_combination))
+    indices = np.random.choice(len(linear_combination), sample_size, replace=False)
+    
+    fig.add_trace(
+        go.Scatter(
+            x=linear_combination.flatten()[indices],
+            y=real_probabilities[indices],
+            mode='markers',
+            name='Dados do Modelo',
+            marker=dict(
+                color=y_train.iloc[indices], 
+                colorscale=[[0, 'green'], [1, 'red']], 
+                size=4, 
+                opacity=0.6,
+                #colorbar=dict(title="Classe Real")
+            ),
+            showlegend=False
+        ),
+        row=1, col=1
+    )
+    
+    # Gráfico 2: Distribuição de probabilidades por classe
+    y_pred_proba = model.predict_proba(X_train)[:, 1]
+    
+    # Separar por classe real
+    prob_class_0 = y_pred_proba[y_train == 0]
+    prob_class_1 = y_pred_proba[y_train == 1]
+    
+    # Histogramas sobrepostos
+    fig.add_trace(
+        go.Histogram(
+            x=prob_class_0,
+            name='Bons Pagadores (Classe 0)',
+            opacity=0.7,
+            nbinsx=30,
+            marker_color='green',
+            showlegend=True
+        ),
+        row=1, col=2
+    )
+    
+    fig.add_trace(
+        go.Histogram(
+            x=prob_class_1,
+            name='Inadimplentes (Classe 1)',
+            opacity=0.7,
+            nbinsx=30,
+            marker_color='red',
+            showlegend=True
+        ),
+        row=1, col=2
+    )
+    
+    # Atualizar layout dos eixos
+    fig.update_xaxes(title_text="Combinação Linear (β₀ + β₁X₁ + β₂X₂ + ...)", row=1, col=1)
+    fig.update_yaxes(title_text="Probabilidade de Inadimplência", row=1, col=1)
+    fig.update_xaxes(title_text="Probabilidade Predita", row=1, col=2)
+    fig.update_yaxes(title_text="Frequência", row=1, col=2)
+    
+    # Layout geral
+    fig.update_layout(
+        title_text="Análise da Função Sigmóide do Modelo de Regressão Logística",
+        height=500,
+        barmode='overlay'
+    )
+    
+    return fig
 
-# Seleção de características
-st.header("1. Seleção de Variáveis")
-st.write("Selecione as variáveis que deseja incluir em seu modelo de regressão logística:")
+# Função para plotar curva ROC
+def plot_roc_curve(y_true, y_pred_proba):
+    fpr, tpr, _ = roc_curve(y_true, y_pred_proba)
+    roc_auc = auc(fpr, tpr)
+    
+    fig = go.Figure()
+    
+    # Curva ROC
+    fig.add_trace(go.Scatter(
+        x=fpr,
+        y=tpr,
+        mode='lines',
+        name=f'ROC Curve (AUC = {roc_auc:.3f})',
+        line=dict(color='blue', width=2)
+    ))
+    
+    # Linha diagonal (classificador aleatório)
+    fig.add_trace(go.Scatter(
+        x=[0, 1],
+        y=[0, 1],
+        mode='lines',
+        name='Classificador Aleatório',
+        line=dict(color='red', dash='dash')
+    ))
+    
+    fig.update_layout(
+        title='Curva ROC',
+        xaxis_title='Taxa de Falsos Positivos (1 - Especificidade)',
+        yaxis_title='Taxa de Verdadeiros Positivos (Sensibilidade)',
+        height=400,
+        showlegend=True
+    )
+    
+    return fig, roc_auc
 
-# Obter características disponíveis (excluindo id e variável alvo)
-available_features = [col for col in training_sample.columns 
-                     if col not in ['id', 'loan_status']]
+# Função para plotar matriz de confusão
+def plot_confusion_matrix(y_true, y_pred, title="Matriz de Confusão"):
+    cm = confusion_matrix(y_true, y_pred)
+    
+    fig = go.Figure(data=go.Heatmap(
+        z=cm,
+        x=['Predito: Bom Pagador', 'Predito: Inadimplente'],
+        y=['Real: Bom Pagador', 'Real: Inadimplente'],
+        colorscale='Blues',
+        text=cm,
+        texttemplate="%{text}",
+        textfont={"size": 16},
+        hoverongaps=False
+    ))
+    
+    fig.update_layout(
+        title=title,
+        height=400,
+        xaxis_title="Predição",
+        yaxis_title="Valor Real"
+    )
+    
+    return fig
 
-# Agrupar características por categoria para melhor organização
-numerical_features = ['loan_amnt', 'int_rate', 'annual_inc', 'dti', 'delinq_2yrs', 'fico_range_low']
-categorical_features = [col for col in available_features if col.startswith('grade_')]
-
-with st.container():
-    col1, col2 = st.columns(2)
+# Função para exibir estatísticas do modelo
+def display_model_statistics(model, X_train, y_train, X_test, y_test, cutoff=0.5):
+    st.subheader("📊 Estatísticas do Modelo de Regressão Logística")
+    
+    # Aplicar cut-off personalizado
+    def apply_custom_cutoff(probabilities, cutoff_value):
+        return (probabilities > cutoff_value).astype(int)
+    
+    # Predições com cut-off personalizado
+    y_pred_proba_train = model.predict_proba(X_train)[:, 1]
+    y_pred_proba_test = model.predict_proba(X_test)[:, 1]
+    
+    y_pred_train = apply_custom_cutoff(y_pred_proba_train, cutoff)
+    y_pred_test = apply_custom_cutoff(y_pred_proba_test, cutoff)
+    
+    # Métricas
+    train_accuracy = accuracy_score(y_train, y_pred_train)
+    test_accuracy = accuracy_score(y_test, y_pred_test)
+    
+    col1, col2, col3 = st.columns(3)
     
     with col1:
-        st.subheader("Variáveis Numéricas")
-        selected_numerical = []
-        for feature in numerical_features:
-            if st.checkbox(f"{feature}", value=True):
-                selected_numerical.append(feature)
+        st.metric("Acurácia no Treinamento", f"{train_accuracy:.4f}")
+        st.metric("Acurácia no Teste", f"{test_accuracy:.4f}")
     
     with col2:
-        st.subheader("Variáveis Categóricas")
-        selected_categorical = []
-        for feature in categorical_features:
-            if st.checkbox(f"{feature}", value=True):
-                selected_categorical.append(feature)
-
-selected_features = selected_numerical + selected_categorical
-
-if not selected_features:
-    st.warning("Por favor, selecione ao menos uma variável para construir o modelo.")
-else:
-    st.success(f"Selecionadas {len(selected_features)} variáveis: {', '.join(selected_features)}")
-
-# Treinamento do modelo
-st.header("2. Treinamento do Modelo")
-
-if st.button("Treinar Modelo de Regressão Logística", key=1, disabled=not selected_features):
-    if not selected_features:
-        st.error("Nenhuma variável selecionada. Por favor, selecione ao menos uma variável.")
-    else:
-        with st.spinner("Treinando o modelo..."):
-            # Preparar dados
-            X = training_sample[selected_features]
-            y = training_sample['loan_status']
-            
-            # Divisão treino-teste
-            X_train, X_test, y_train, y_test = train_test_split(
-                X, y, test_size=0.3, random_state=42, stratify=y
-            )
-            
-            st.session_state.X_train = X_train
-            st.session_state.X_test = X_test
-            st.session_state.y_train = y_train
-            st.session_state.y_test = y_test
-            
-            # Ajustar modelo de regressão logística
-            model = LogisticRegression(max_iter=1000, random_state=42, n_jobs=-1)
-            model.fit(X_train, y_train)
-            st.session_state.model = model
-            
-            # Previsões
-            y_pred_proba = model.predict_proba(X_test)[:, 1]
-            y_pred = model.predict(X_test)
-            st.session_state.y_pred = y_pred
-            st.session_state.y_pred_proba = y_pred_proba
-            
-            # Usar diretamente LogisticRegression do sklearn
-            # Isso evita o processo problemático de ajuste do statsmodels
-            st.session_state.model_coef = model.coef_[0]
-            st.session_state.model_intercept = model.intercept_[0]
-            
-            # Criar estatísticas de resumo personalizadas
-            from sklearn.metrics import log_loss
-            train_pred_proba = model.predict_proba(X_train)[:, 1]
-            train_log_loss = log_loss(y_train, train_pred_proba)
-            
-            # Armazenar para exibição posterior
-            st.session_state.custom_summary = {
-                'features': selected_features,
-                'coefficients': model.coef_[0],
-                'intercept': model.intercept_[0],
-                'train_log_loss': train_log_loss,
-                'train_accuracy': model.score(X_train, y_train),
-                'test_accuracy': model.score(X_test, y_test)
-            }
-            
-            # Calcular equação para exibição
-            coefficients = model.coef_[0]
-            intercept = model.intercept_[0]
-            st.session_state.coefficients = coefficients
-            st.session_state.intercept = intercept
-            st.session_state.selected_features = selected_features
-            
-            st.success("Modelo treinado com sucesso!")
-            st.session_state.model_trained = True
-            
-            # Armazenar informações das características para uso posterior com amostra de teste
-            st.session_state.original_features = selected_features
-
-# Exibição de resultados - mostrar apenas se o modelo foi treinado
-if 'model_trained' in st.session_state and st.session_state.model_trained:
-    st.header("Resultados do Modelo")
+        st.metric("Número de Observações (Treino)", len(y_train))
+        st.metric("Número de Observações (Teste)", len(y_test))
     
-    # Adicionar seletor de limiar no topo da seção de resultados
-    st.subheader("1. Configuração do Limiar de Decisão")
-    with st.container():
+    with col3:
+        st.metric("Cut-off Utilizado", f"{cutoff:.2%}")
+        negadas_pct = (y_pred_test.sum() / len(y_pred_test)) * 100
+        st.metric("% Operações Negadas", f"{negadas_pct:.1f}%")
+    
+    # Relatório de classificação
+    st.subheader("📋 Relatório de Classificação")
+    report = classification_report(y_test, y_pred_test, output_dict=True)
+    
+    # Criar DataFrame mais limpo e organizado
+    report_data = {
+        'Métrica': ['Precisão', 'Recall (Sensibilidade)', 'F1-Score', 'Support (Qtd)'],
+        'Bons Pagadores (Classe 0)': [
+            f"{report['0']['precision']:.4f}",
+            f"{report['0']['recall']:.4f}", 
+            f"{report['0']['f1-score']:.4f}",
+            f"{int(report['0']['support'])}"
+        ],
+        'Inadimplentes (Classe 1)': [
+            f"{report['1']['precision']:.4f}",
+            f"{report['1']['recall']:.4f}",
+            f"{report['1']['f1-score']:.4f}", 
+            f"{int(report['1']['support'])}"
+        ]
+    }
+    
+    report_df = pd.DataFrame(report_data)
+    st.dataframe(report_df, use_container_width=True)
+    
+    # Métricas gerais em destaque
+    col1, col2, col3 = st.columns(3)
+    
+    with col1:
+        st.metric(
+            "📊 Acurácia Geral", 
+            f"{report['accuracy']:.4f}",
+            help="Proporção total de predições corretas"
+        )
+    
+    with col2:
+        st.metric(
+            "⚖️ F1-Score Médio", 
+            f"{report['macro avg']['f1-score']:.4f}",
+            help="Média harmônica entre precisão e recall"
+        )
+    
+    with col3:
+        st.metric(
+            "🎯 F1-Score Ponderado", 
+            f"{report['weighted avg']['f1-score']:.4f}",
+            help="F1-Score considerando o desbalanceamento das classes"
+        )
+    
+    # Explicação das métricas
+    with st.expander("💡 Explicação das Estatísticas"):
+        st.markdown(f"""
+        **Cut-off Atual**: {cutoff:.2%} - Operações com probabilidade de inadimplência MAIOR que {cutoff:.2%} são NEGADAS.
+        
+        **Acurácia**: Proporção de predições corretas em relação ao total de predições.
+        
+        **Precisão**: Proporção de verdadeiros positivos em relação ao total de positivos preditos.
+        
+        **Recall (Sensibilidade)**: Proporção de verdadeiros positivos em relação ao total de positivos reais.
+        
+        **F1-Score**: Média harmônica entre precisão e recall.
+        
+        **Support**: Número de observações reais de cada classe.
+        
+        **Impacto do Cut-off**:
+        - Cut-off mais baixo: Mais aprovações, menos conservador
+        - Cut-off mais alto: Menos aprovações, mais conservador
+        - Cut-off padrão: 0.50 (50%)
+        """)
+
+
+# Função para exibir equação da regressão
+def display_regression_equation(model, selected_features):
+    st.subheader("🔢 Equação da Regressão Logística")
+    
+    # Coeficientes
+    coef = model.coef_[0]
+    intercept = model.intercept_[0]
+    
+    # Criar DataFrame com coeficientes
+    coef_df = pd.DataFrame({
+        'Variável': selected_features,
+        'Coeficiente': coef,
+        'Exp(Coeficiente)': np.exp(coef)
+    })
+    
+    st.dataframe(coef_df.round(4))
+    
+    # Equação
+    st.markdown("### Equação Logística:")
+    equation = f"logit(p) = {intercept:.4f}"
+    
+    for i, feature in enumerate(selected_features):
+        sign = "+" if coef[i] >= 0 else ""
+        equation += f" {sign} {coef[i]:.4f} * {feature}"
+    
+    st.code(equation)
+    
+    st.markdown("### Probabilidade:")
+    st.latex(r"p = \frac{1}{1 + e^{-logit(p)}}")
+    
+    # Interpretação dos coeficientes
+    with st.expander("💡 Interpretação dos Coeficientes"):
         st.markdown("""
-        **Configure o limiar de decisão para aprovação/rejeição de empréstimos:**
-        - Empréstimos com probabilidade prevista **abaixo** deste limiar serão **aprovados**
-        - Empréstimos com probabilidade prevista **acima** deste limiar serão **rejeitados**
+        **Coeficiente**: Representa a mudança no log-odds (logit) para uma mudança unitária na variável independente.
+        
+        **Exp(Coeficiente)**: Representa o odds ratio. 
+        - Se > 1: A variável aumenta a chance de inadimplência
+        - Se < 1: A variável diminui a chance de inadimplência
+        - Se = 1: A variável não afeta a chance de inadimplência
         """)
         
-        # Slider do limiar
-        decision_threshold = st.slider(
-            "Limiar de Decisão (Probabilidade de Inadimplência)",
-            min_value=0.1,
-            max_value=0.9,
+        st.markdown("---")
+        st.markdown("### 📊 Interpretação Específica por Variável:")
+        
+        for i, feature in enumerate(selected_features):
+            coef_val = coef[i]
+            exp_coef = np.exp(coef_val)
+            
+            # Determinar o efeito
+            if coef_val > 0:
+                effect_icon = "📈"
+                effect_text = "AUMENTA"
+                risk_color = "red"
+            elif coef_val < 0:
+                effect_icon = "📉"
+                effect_text = "DIMINUI"
+                risk_color = "green"
+            else:
+                effect_icon = "➡️"
+                effect_text = "NÃO AFETA"
+                risk_color = "gray"
+            
+            # Calcular magnitude do efeito
+            if abs(coef_val) > 1:
+                magnitude = "FORTE"
+            elif abs(coef_val) > 0.5:
+                magnitude = "MODERADO"
+            elif abs(coef_val) > 0.1:
+                magnitude = "FRACO"
+            else:
+                magnitude = "MUITO FRACO"
+            
+            # Interpretação em linguagem de negócio
+            if coef_val != 0:
+                change_pct = (exp_coef - 1) * 100
+                if coef_val > 0:
+                    interpretation = f"Cada aumento unitário em **{feature}** multiplica as chances de inadimplência por **{exp_coef:.3f}** (aumento de {change_pct:+.1f}%)"
+                else:
+                    interpretation = f"Cada aumento unitário em **{feature}** multiplica as chances de inadimplência por **{exp_coef:.3f}** (redução de {abs(change_pct):.1f}%)"
+            else:
+                interpretation = f"**{feature}** não tem impacto significativo na probabilidade de inadimplência"
+            
+            # Exibir interpretação
+            st.markdown(f"""
+            **{effect_icon} {feature}**
+            - **Efeito**: <span style="color:{risk_color}">**{effect_text}**</span> o risco de inadimplência
+            - **Magnitude**: {magnitude} (coeficiente: {coef_val:.4f})
+            - **Interpretação**: {interpretation}
+            """, unsafe_allow_html=True)
+            
+            st.markdown("---")
+
+# Função principal
+def main():
+    # Carregar dados
+    training_data, production_data = load_data()
+    
+    if training_data is None or production_data is None:
+        st.stop()
+    
+    # Seção de configuração do modelo na página principal
+    st.header("🔧 Configuração do Modelo")
+    
+    # Listar variáveis disponíveis (excluindo target e id)
+    available_features = [col for col in training_data.columns 
+                         if col not in ['loan_status', 'id', 'unnamed:0']]
+    
+    # Seleção de variáveis
+    selected_features = st.multiselect(
+        "Selecione as variáveis para o modelo:",
+        available_features,
+        default=['loan_amnt', 'int_rate', 'annual_inc', 'fico_range_low'],
+        help="Selecione as variáveis que serão utilizadas no modelo de regressão logística"
+    )
+    
+    # Exibir descrições das variáveis em um expander
+    with st.expander("📝 Ver Descrição das Variáveis"):
+        st.markdown("### Descrição de Todas as Variáveis Disponíveis")
+        for feature in available_features:
+            st.write(f"**{feature}**: {variable_descriptions.get(feature, 'Descrição não disponível')}")
+        
+        if selected_features:
+            st.markdown("---")
+            st.markdown("### Variáveis Selecionadas no Modelo Atual")
+            for feature in selected_features:
+                st.write(f"**{feature}**: {variable_descriptions.get(feature, 'Descrição não disponível')}")
+    
+    st.markdown("---")
+    
+    # Botão para executar o modelo
+    if not selected_features:
+        st.warning("⚠️ Selecione pelo menos uma variável para continuar!")
+        st.button("🚀 Executar Modelo de Regressão Logística", disabled=True)
+        return
+    
+    # Mostrar resumo das variáveis selecionadas
+    st.info(f"📊 Variáveis selecionadas: {', '.join(selected_features)}")
+    
+    # Configuração do cut-off ANTES do treinamento
+    st.subheader("⚖️ Configuração do Ponto de Cut-off")
+    
+    col1, col2 = st.columns([2, 1])
+    
+    with col1:
+        cutoff = st.slider(
+            "Selecione o ponto de cut-off (probabilidade mínima para NEGAR o crédito):",
+            min_value=0.0,
+            max_value=1.0,
             value=0.5,
             step=0.01,
-            help="Ajuste este limiar com base em seu apetite ao risco. Valores menores aprovam mais empréstimos mas aumentam o risco de inadimplência."
+            format="%.2f",
+            help="Operações com probabilidade de inadimplência MAIOR que este valor serão NEGADAS. Este cut-off será usado para avaliar o modelo."
+        )
+    
+    with col2:
+        st.metric("Cut-off Selecionado", f"{cutoff:.2%}")
+        if cutoff < 0.3:
+            st.warning("⚠️ Cut-off baixo: Muitas aprovações")
+        elif cutoff > 0.7:
+            st.warning("⚠️ Cut-off alto: Muitas negações")
+        else:
+            st.success("✅ Cut-off equilibrado")
+    
+    # Função para aplicar cut-off personalizado
+    def apply_custom_cutoff(probabilities, cutoff_value):
+        return (probabilities > cutoff_value).astype(int)
+    
+    # Botão para executar o modelo
+    run_model = st.button("🚀 Executar Modelo de Regressão Logística", type="primary")
+    
+    if not run_model:
+        st.info("👆 Clique no botão acima para treinar o modelo com as variáveis selecionadas.")
+        return
+    
+    # Mostrar progresso
+    with st.spinner('🔄 Treinando modelo de regressão logística...'):
+        # Preparar dados
+        X = training_data[selected_features]
+        y = training_data['loan_status']
+        
+        # Dividir dados em treino e teste
+        X_train, X_test, y_train, y_test = train_test_split(
+            X, y, test_size=0.3, random_state=42, stratify=y
         )
         
-        # Armazenar limiar no session state
-        st.session_state.decision_threshold = decision_threshold
+        # Criar e treinar modelo
+        model = LogisticRegression(random_state=42, max_iter=1000)
+        model.fit(X_train, y_train)
+    
+    st.success("✅ Modelo treinado com sucesso!")
+    st.info(f"🎯 Cut-off aplicado: {cutoff:.2%} - Todas as análises usarão este ponto de corte.")
+    
+    st.markdown("---")
+    
+    # Tabs para organizar o conteúdo
+    tab1, tab2, tab3, tab4, tab5 = st.tabs([
+        "📊 Análise do Modelo", 
+        "🎯 Aplicação em Produção", 
+        "📈 Comparação com Produção",
+        "📋 Dados", 
+        "ℹ️ Informações"
+    ])
+    
+    with tab1:
+        st.header("📊 Análise do Modelo de Treinamento")
         
-        # Mostrar impacto da mudança de limiar
-        col1, col2, col3 = st.columns(3)
+        # Gráfico S da regressão logística
+        st.subheader("📈 Curva S da Regressão Logística")
+        sigmoid_fig = plot_sigmoid_curve(model, X_train, y_train, selected_features)
+        st.plotly_chart(sigmoid_fig, use_container_width=True)
+        
+        # Curva ROC
+        st.subheader("📊 Curva ROC")
+        y_pred_proba_test = model.predict_proba(X_test)[:, 1]
+        roc_fig, roc_auc = plot_roc_curve(y_test, y_pred_proba_test)
+        st.plotly_chart(roc_fig, use_container_width=True)
+        
+        # Matriz de confusão
+        st.subheader("🔍 Matriz de Confusão")
+        y_pred_proba_test = model.predict_proba(X_test)[:, 1]
+        y_pred_test_custom = apply_custom_cutoff(y_pred_proba_test, cutoff)
+        cm_fig = plot_confusion_matrix(y_test, y_pred_test_custom, f"Matriz de Confusão (Cut-off: {cutoff:.2%})")
+        st.plotly_chart(cm_fig, use_container_width=True)
+        
+        # Mostrar impacto do cut-off selecionado
+        with st.expander("📊 Comparação com Cut-off Padrão (50%)"):
+            col1, col2, col3 = st.columns(3)
+            
+            with col1:
+                # Cut-off padrão (0.5)
+                y_pred_test_default = apply_custom_cutoff(y_pred_proba_test, 0.5)
+                acc_default = accuracy_score(y_test, y_pred_test_default)
+                st.metric("Acurácia (Cut-off 50%)", f"{acc_default:.3f}")
+            
+            with col2:
+                # Cut-off personalizado
+                acc_custom = accuracy_score(y_test, y_pred_test_custom)
+                st.metric(f"Acurácia (Cut-off {cutoff:.0%})", f"{acc_custom:.3f}")
+            
+            with col3:
+                # Diferença
+                diff = acc_custom - acc_default
+                st.metric("Diferença", f"{diff:+.3f}")
+        
+        # Estatísticas do modelo
+        display_model_statistics(model, X_train, y_train, X_test, y_test, cutoff)
+        
+        # Equação da regressão
+        display_regression_equation(model, selected_features)
+    
+    with tab2:
+        st.header("🎯 Aplicação do Modelo em Produção")
+        
+        # Aplicar modelo nos dados de produção
+        X_production = production_data[selected_features]
+        y_pred_proba_production = model.predict_proba(X_production)[:, 1]
+        y_pred_production = apply_custom_cutoff(y_pred_proba_production, cutoff)
+        
+        # Criar DataFrame com resultados
+        results_df = production_data.copy()
+        results_df['probabilidade_inadimplencia'] = y_pred_proba_production
+        results_df['decisao_credito'] = ['NEGAR' if pred == 1 else 'APROVAR' for pred in y_pred_production]
+        
+        # Estatísticas de decisão
+        st.subheader("📊 Estatísticas de Decisão")
+        
+        col1, col2, col3, col4 = st.columns(4)
         
         with col1:
-            approved_at_threshold = (st.session_state.y_pred_proba < decision_threshold).sum()
-            st.metric(
-                "Empréstimos que seriam Aprovados", 
-                f"{approved_at_threshold} ({approved_at_threshold/len(st.session_state.y_pred_proba)*100:.1f}%)",
-                help="Número de empréstimos do conjunto de teste que seriam aprovados neste limiar"
-            )
+            aprovadas = sum(y_pred_production == 0)
+            st.metric("Operações Aprovadas", aprovadas)
         
         with col2:
-            rejected_at_threshold = (st.session_state.y_pred_proba >= decision_threshold).sum()
-            st.metric(
-                "Empréstimos que seriam Rejeitados", 
-                f"{rejected_at_threshold} ({rejected_at_threshold/len(st.session_state.y_pred_proba)*100:.1f}%)",
-                help="Número de empréstimos do conjunto de teste que seriam rejeitados neste limiar"
-            )
-            
+            negadas = sum(y_pred_production == 1)
+            st.metric("Operações Negadas", negadas)
+        
         with col3:
-            # Calcular precisão e recall neste limiar
-            y_pred_at_threshold = (st.session_state.y_pred_proba >= decision_threshold).astype(int)
-            if y_pred_at_threshold.sum() > 0:
-                precision_at_threshold = precision_score(st.session_state.y_test, y_pred_at_threshold)
-                st.metric(
-                    "Precisão neste Limiar", 
-                    f"{precision_at_threshold:.3f}",
-                    help="Dos empréstimos previstos como inadimplentes, qual porcentagem realmente ficou inadimplente"
-                )
-            else:
-                st.metric("Precisão neste Limiar", "N/A", help="Nenhum empréstimo previsto como inadimplente neste limiar")
-
-    
-    # 1. Curva de Regressão Logística
-    st.subheader("2. Regressão Logística - Curva-S")
-    with st.container():
-        fig, ax = plt.subplots(figsize=(10, 6))
+            taxa_aprovacao = (aprovadas / len(y_pred_production)) * 100
+            st.metric("Taxa de Aprovação", f"{taxa_aprovacao:.1f}%")
         
-        # Ordenar probabilidades e valores reais para plotagem
-        sorted_indices = np.argsort(st.session_state.y_pred_proba)
-        sorted_probs = st.session_state.y_pred_proba[sorted_indices]
-        sorted_actuals = st.session_state.y_test.values[sorted_indices]
+        with col4:
+            st.metric("Cut-off Aplicado", f"{cutoff:.2%}")
         
-        # Plotar a curva logística
-        ax.plot(range(len(sorted_probs)), sorted_probs, 'b-', linewidth=2)
+        # Distribuição de probabilidades com linha de cut-off
+        st.subheader("📈 Distribuição de Probabilidades de Inadimplência")
         
-        # Adicionar observações reais como pontos (com jitter para visibilidade)
-        y_jittered = sorted_actuals + np.random.normal(0, 0.02, len(sorted_actuals))
-        ax.scatter(range(len(sorted_probs)), y_jittered, c='r', alpha=0.1, s=1)
+        fig = go.Figure()
+        fig.add_trace(go.Histogram(
+            x=y_pred_proba_production,
+            nbinsx=50,
+            name='Distribuição de Probabilidades',
+            opacity=0.7,
+            marker_color='lightblue'
+        ))
         
-        ax.set_xlabel('Observações (ordenadas pela probabilidade prevista)')
-        ax.set_ylabel('Probabilidade de Inadimplência')
-        ax.set_title('Regressão Logística - Curva-S')
-        ax.grid(True, alpha=0.3)
+        # Adicionar linha vertical do cut-off
+        fig.add_vline(
+            x=cutoff, 
+            line_dash="dash", 
+            line_color="red",
+            line_width=3,
+            annotation_text=f"Cut-off: {cutoff:.2%}"
+        )
         
-        # Adicionar linha horizontal no limiar definido pelo usuário
-        ax.axhline(y=decision_threshold, color='green', linestyle='--', alpha=0.7, linewidth=2)
-        ax.text(len(sorted_probs)*0.02, decision_threshold + 0.02, f'Limiar de Decisão (p={decision_threshold:.2f})', color='green', fontweight='bold')
-
-        col1, col2, col3 = st.columns([1, 6, 1])
-        with col2:
-            st.pyplot(fig)        
+        # Adicionar áreas coloridas
+        fig.add_vrect(
+            x0=0, x1=cutoff,
+            fillcolor="green", opacity=0.2,
+            annotation_text="APROVAR", annotation_position="top left"
+        )
         
-        st.markdown(f"""
-        **Interpretação:** A curva em S mostra como a probabilidade de inadimplência prevista pelo modelo varia entre todas as observações.
-        - Linha azul: Probabilidades previstas (ordenadas da menor para a maior)
-        - Pontos vermelhos: Resultados reais (0=pago, 1=inadimplente)
-        - Linha verde: Limiar de decisão (definido pelo usuário: {decision_threshold:.2f})
+        fig.add_vrect(
+            x0=cutoff, x1=1,
+            fillcolor="red", opacity=0.2,
+            annotation_text="NEGAR", annotation_position="top right"
+        )
         
-        Com o limiar atual de {decision_threshold:.2f}:
-        - Empréstimos com probabilidade < {decision_threshold:.2f} serão **aprovados**
-        - Empréstimos com probabilidade ≥ {decision_threshold:.2f} serão **rejeitados**
+        fig.update_layout(
+            title='Distribuição de Probabilidades de Inadimplência com Cut-off',
+            xaxis_title='Probabilidade de Inadimplência',
+            yaxis_title='Frequência',
+            height=400
+        )
         
-        Em um bom modelo, é desejável que a maioria dos pontos esteja agrupada no canto inferior esquerdo 
-        (pagamentos corretamente previstos) e no canto superior direito (inadimplências corretamente previstas).
-        """)
-    
-    # 2. Curva ROC
-    st.subheader("3. Curva ROC")
-    with st.container():
-        fpr, tpr, thresholds = roc_curve(st.session_state.y_test, st.session_state.y_pred_proba)
-        roc_auc = auc(fpr, tpr)
+        st.plotly_chart(fig, use_container_width=True)
         
-        fig, ax = plt.subplots(figsize=(10, 6))
-        ax.plot(fpr, tpr, 'b-', linewidth=2, label=f'Curva ROC (AUC = {roc_auc:.3f})')
-        ax.plot([0, 1], [0, 1], 'r--', linewidth=1, label='Classificador Aleatório')
-        ax.set_xlabel('Taxa de Falsos Positivos (1 - Especificidade)')
-        ax.set_ylabel('Taxa de Verdadeiros Positivos (Sensibilidade)')
-        ax.set_title('Curva ROC (Receiver Operating Characteristic)')
-        ax.legend(loc='lower right')
-        ax.grid(True, alpha=0.3)
-        col1, col2, col3 = st.columns([1, 6, 1])
-        with col2:
-            st.pyplot(fig)        
+        # Análise por faixas de probabilidade
+        st.subheader("📊 Análise por Faixas de Probabilidade")
         
-        st.metric("Score AUC", f"{roc_auc:.3f}")
-        st.markdown(f"""
-        **Interpretação:** A curva ROC mostra o trade-off entre sensibilidade e especificidade.
-        - AUC (Área Sob a Curva): {roc_auc:.3f} (quanto maior melhor, 1.0 é perfeito, 0.5 é aleatório)
-
-        Quanto mais próxima a curva estiver do canto superior esquerdo, melhor é a capacidade do modelo de
-        diferenciar entre pagamentos e inadimplências. Uma AUC de:
-
-        * 0,9 a 1,0: Discriminação excelente
-        * 0,8 a 0,9: Discriminação boa
-        * 0,7 a 0,8: Discriminação razoável
-        * 0,6 a 0,7: Discriminação fraca
-        * 0,5 a 0,6: Discriminação falha
-        """)
-    
-    # 3. Matriz de Confusão (atualizada para usar limiar do usuário)
-    st.subheader("4. Matriz de Confusão")
-    with st.container():
-        # Recalcular previsões usando limiar definido pelo usuário
-        y_pred_user_threshold = (st.session_state.y_pred_proba >= decision_threshold).astype(int)
-        cm = confusion_matrix(st.session_state.y_test, y_pred_user_threshold)
+        # Criar faixas
+        bins = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
+        labels = ['0-20%', '20-40%', '40-60%', '60-80%', '80-100%']
+        results_df['faixa_probabilidade'] = pd.cut(results_df['probabilidade_inadimplencia'], bins=bins, labels=labels, include_lowest=True)
         
-        # Calcular métricas
-        tn, fp, fn, tp = cm.ravel()
-        accuracy = (tp + tn) / (tp + tn + fp + fn)
-        precision = tp / (tp + fp) if (tp + fp) > 0 else 0
-        recall = tp / (tp + fn) if (tp + fn) > 0 else 0
-        specificity = tn / (tn + fp) if (tn + fp) > 0 else 0
-        f1 = 2 * (precision * recall) / (precision + recall) if (precision + recall) > 0 else 0
-        
-        fig, ax = plt.subplots(figsize=(10, 8))
-        sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax,
-                    xticklabels=['Previsto Pago', 'Previsto Inadimplente'],
-                    yticklabels=['Realmente Pago', 'Realmente Inadimplente'])
-        ax.set_xlabel('Rótulo Previsto')
-        ax.set_ylabel('Rótulo Verdadeiro')
-        ax.set_title(f'Matriz de Confusão (Limiar = {decision_threshold:.2f})')
-        col1, col2, col3 = st.columns([1, 6, 1])
-        with col2:
-            st.pyplot(fig)        
+        # Contar por faixa
+        faixa_counts = results_df['faixa_probabilidade'].value_counts().sort_index()
         
         col1, col2 = st.columns(2)
         
         with col1:
-            st.markdown(f"""
-            **Métricas no Limiar {decision_threshold}:**
-            - **Acurácia:** {accuracy:.3f}
-            - **Precisão:** {precision:.3f}
-            - **Recall (Sensibilidade):** {recall:.3f}
-            - **Especificidade:** {specificity:.3f}
-            - **F1 Score:** {f1:.3f}
-            """)
-            
+            st.write("**Distribuição por Faixa de Risco:**")
+            for faixa, count in faixa_counts.items():
+                pct = (count / len(results_df)) * 100
+                st.write(f"• {faixa}: {count} operações ({pct:.1f}%)")
+        
         with col2:
-            st.markdown("""
-            **Definições:**
-            - **Verdadeiros Negativos (TN):** Pagamentos corretamente previstos
-            - **Falsos Positivos (FP):** Inadimplências incorretamente previstas
-            - **Falsos Negativos (FN):** Pagamentos incorretamente previstos
-            - **Verdadeiros Positivos (TP):** Inadimplências corretamente previstas
-            - **Precisão:** Proporção de inadimplências previstas que eram inadimplências reais
-            - **Recall:** Proporção de inadimplências reais que foram corretamente previstas
-            """)
-
-        # Explicação das métricas
-        st.markdown(f"""
-        ### 📊 Explicação das Métricas (Limiar = {decision_threshold:.2f}):
-        - **Acurácia**: Proporção total de previsões corretas
-        - **Precisão**: Dos casos previstos como inadimplentes, quantos realmente são?
-        - **Recall (Sensibilidade)**: Dos casos realmente inadimplentes, quantos foram identificados?
-        - **Especificidade**: Dos casos realmente bons, quantos foram identificados corretamente?
+            # Gráfico de pizza
+            fig_pie = go.Figure(data=[go.Pie(
+                labels=faixa_counts.index,
+                values=faixa_counts.values,
+                hole=0.3
+            )])
+            fig_pie.update_layout(title="Distribuição por Faixa de Risco", height=300)
+            st.plotly_chart(fig_pie, use_container_width=True)
         
-        **Impacto do Limiar:**
-        - Limiar mais **baixo**: Aprova mais empréstimos, mas aumenta risco de inadimplência
-        - Limiar mais **alto**: Rejeita mais empréstimos, mas reduz risco de inadimplência
-        """)
+        # Exibir resultados
+        st.subheader("📋 Resultados das Decisões")
+        display_cols = ['id', 'probabilidade_inadimplencia', 'decisao_credito', 'faixa_probabilidade']
+        st.dataframe(results_df[display_cols].round(4))
     
-    # 4. Resumo do Modelo (Versão personalizada já que statsmodels está causando problemas)
-    st.subheader("5. Resumo das Estatísticas de Regressão")
-    with st.container():
-        if 'custom_summary' in st.session_state:
-            summary = st.session_state.custom_summary
+    with tab3:
+        st.header("📈 Comparação com Dados de Produção")
+        
+        # Verificar se existe loan_status nos dados de produção
+        if 'loan_status' in production_data.columns:
+            y_true_production = production_data['loan_status']
             
-            # Criar DataFrame para exibição de coeficientes
-            coef_df = pd.DataFrame({
-                'Variável': summary['features'],
-                'Coeficiente': summary['coefficients'],
-                'Razão de Chances': np.exp(summary['coefficients'])
-            })
+            # Aplicar modelo nos dados de produção com cut-off personalizado
+            X_production = production_data[selected_features]
+            y_pred_proba_production = model.predict_proba(X_production)[:, 1]
+            y_pred_production = apply_custom_cutoff(y_pred_proba_production, cutoff)
             
-            # Exibir informações do modelo
-            st.markdown("### Informações do Modelo")
-            st.markdown(f"""
-            - **Número de observações:** {len(st.session_state.X_train)}
-            - **Número de preditores:** {len(summary['features'])}
-            - **Intercepto:** {summary['intercept']:.3f}
-            - **Log Loss de Treinamento:** {summary['train_log_loss']:.3f}
-            - **Acurácia de Treinamento:** {summary['train_accuracy']:.3f}
-            - **Acurácia de Teste:** {summary['test_accuracy']:.3f}
-            """)
+            # Comparação com diferentes cut-offs
+            st.subheader("🔄 Comparação de Performance por Cut-off")
             
-            st.markdown("### Coeficientes")
+            cutoffs_comparison = [0.3, 0.4, 0.5, 0.6, 0.7]
+            comparison_results = []
             
-            # Estilização do DataFrame usando Pandas
-            def style_table(df):
-                df = df.reset_index(drop=True)
+            for co in cutoffs_comparison:
+                y_pred_co = apply_custom_cutoff(y_pred_proba_production, co)
+                acc = accuracy_score(y_true_production, y_pred_co)
                 
-                return df.style.set_table_styles(
-                    [{
-                        'selector': 'thead th',
-                        'props': [('font-weight', 'bold'),
-                                ('border-style', 'solid'),
-                                ('border-width', '0px 0px 2px 0px'),
-                                ('border-color', 'black'),]
-                    }, {
-                        'selector': 'thead th:not(:first-child)',
-                        'props': [('text-align', 'center')]  # Centralizar todos os cabeçalhos exceto o primeiro
-                    }, {
-                        'selector': 'thead th:last-child',
-                        'props': [('color', 'black')]  # Fazer o cabeçalho da última coluna preto
-                    }, {
-                        'selector': 'td',
-                        'props': [('border-style', 'solid'),
-                                ('border-width', '0px 0px 1px 0px'),
-                                ('border-color', 'black'),
-                                ('text-align', 'center')]
-                    }, {
-                        'selector': 'th',
-                        'props': [('border-style', 'solid'),
-                                ('border-width', '0px 0px 1px 0px'),
-                                ('border-color', 'black'),
-                                ('text-align', 'left'),]
-                    }]
-                ).set_properties(**{'padding': '2px',
-                                    'font-size': '15px'})
-
-            # Exibindo no Streamlit
-            def main():
-                styled_html = style_table(coef_df).to_html(index=False, escape=False)
-                centered_html = f'''
-                <div style="display: flex; justify-content: left;">
-                    {styled_html}
-                '''  # Fechar corretamente a tag div
-                st.markdown(centered_html, unsafe_allow_html=True)
-
-            if __name__ == '__main__':
-                main()
-            
-            # Adicionar botão de download para resumo
-            summary_text = f"""
-            Resumo do Modelo de Regressão Logística para Risco de Crédito
-            ============================================================
-            
-            Informações do Modelo:
-            ----------------------
-            Número de observações: {len(st.session_state.X_train)}
-            Número de preditores: {len(summary['features'])}
-            Intercepto: {summary['intercept']}
-            Log Loss de Treinamento: {summary['train_log_loss']}
-            Acurácia de Treinamento: {summary['train_accuracy']}
-            Acurácia de Teste: {summary['test_accuracy']}
-            
-            Coeficientes:
-            ------------
-            """
-            
-            for feature, coef, odds in zip(summary['features'], summary['coefficients'], np.exp(summary['coefficients'])):
-                summary_text += f"{feature}: {coef:.6f} (razão de chances: {odds:.6f})\n"
-            
-            st.download_button(
-                label="Baixar Resumo como Texto",
-                data=summary_text,
-                file_name="resumo_regressao_logistica.txt",
-                mime="text/plain"
-            )
-        else:
-            st.error("Estatísticas de resumo do modelo não estão disponíveis. Por favor, treine o modelo primeiro.")
-    
-    # 5. Explicação das estatísticas
-    st.subheader("6. Interpretação das Estatísticas")
-    with st.container():
-        st.markdown("""
-        **Principais estatísticas e sua interpretação:**
-        
-        **Coeficiente (coef):** 
-        - Indica a mudança no log-odds de inadimplência para um aumento de uma unidade no preditor.
-        - Coeficiente positivo: À medida que o preditor aumenta, a probabilidade de inadimplência aumenta.
-        - Coeficiente negativo: À medida que o preditor aumenta, a probabilidade de inadimplência diminui.
-        
-        **Razão de Chances:**
-        - O coeficiente exponenciado (e^coef).
-        - Representa como as chances de inadimplência se multiplicam quando o preditor aumenta em uma unidade.
-        - Razão de Chances > 1: A variável aumenta o risco de inadimplência.
-        - Razão de Chances < 1: A variável diminui o risco de inadimplência.
-        
-        **Log Loss:**
-        - Mede quão bem as probabilidades previstas do modelo correspondem aos resultados reais.
-        - Valores menores indicam melhor ajuste (menos incerteza).
-        
-        **Acurácia:**
-        - Proporção de previsões corretas (tanto empréstimos pagos quanto inadimplentes).
-        - Valores maiores indicam melhor desempenho preditivo geral.
-        
-        **Interpretando Efeitos das Variáveis:**
-        - A magnitude dos coeficientes indica a força do efeito.
-        - Variáveis categóricas (como grau) mostram o efeito relativo a uma categoria de referência.
-        - Variáveis com coeficientes absolutos maiores têm efeitos mais fortes na probabilidade de inadimplência.
-        """)
-    
-    # 6. Equação de Regressão Logística
-    st.subheader("7. Equação de Regressão Logística")
-    with st.container():
-        # Formatar a equação com melhor espaçamento e alinhamento
-        st.markdown("""
-        A equação de regressão logística (forma log-odds):
-        """)
-        
-        # Construir equação dinamicamente usando coeficientes reais do modelo
-        intercept_term = f"{st.session_state.intercept:.4f}"
-        
-        # Criar versão em texto limpa
-        text_equation = f"log(P(Inadimplência)/(1-P(Inadimplência))) = {intercept_term}"
-        for feature, coef in zip(st.session_state.selected_features, st.session_state.coefficients):
-            if coef >= 0:
-                text_equation += f" + {coef:.4f} × {feature}"
-            else:
-                text_equation += f" {coef:.4f} × {feature}"
-        
-        st.code(text_equation, language=None)
-
-        # Equação de probabilidade com melhor formatação
-        st.markdown("""
-        **Probabilidade de Inadimplência:**
-        
-        $\\large P(\\text{Inadimplência}) = \\frac{1}{1 + e^{-z}}$
-        
-        Onde $z$ é a equação log-odds acima.
-        """)
-        
-        # Tabela de interpretação de coeficientes
-        st.subheader("Interpretação dos Coeficientes")
-        
-        coef_df = pd.DataFrame({
-            'Variável': st.session_state.selected_features,
-            'Coeficiente': st.session_state.coefficients,
-            'Razão de Chances': np.exp(st.session_state.coefficients)
-        })
-        
-        # Adicionar interpretação
-        def get_interpretation(feature, coef, odds_ratio):
-            if coef > 0:
-                return f"Um aumento de uma unidade em {feature} multiplica as chances de inadimplência por {odds_ratio:.3f} (aumenta em {(odds_ratio-1)*100:.1f}%)"
-            else:
-                return f"Um aumento de uma unidade em {feature} multiplica as chances de inadimplência por {odds_ratio:.3f} (diminui em {(1-odds_ratio)*100:.1f}%)"
-        
-        coef_df['Interpretação'] = [
-            get_interpretation(feature, coef, odds_ratio) 
-            for feature, coef, odds_ratio in zip(
-                coef_df['Variável'], coef_df['Coeficiente'], coef_df['Razão de Chances']
-            )
-        ]
-        
-        # Estilização do DataFrame usando Pandas
-        def style_table(df):
-            df = df.reset_index(drop=True)
-            
-            return df.style.set_table_styles(
-                [{
-                    'selector': 'thead th',
-                    'props': [('font-weight', 'bold'),
-                            ('border-style', 'solid'),
-                            ('border-width', '0px 0px 2px 0px'),
-                            ('border-color', 'black'),]
-                }, {
-                    'selector': 'thead th:not(:first-child)',
-                    'props': [('text-align', 'center')]  # Centralizar todos os cabeçalhos exceto o primeiro
-                }, {
-                    'selector': 'thead th:last-child',
-                    'props': [('color', 'black')]  # Fazer o cabeçalho da última coluna preto
-                }, {
-                    'selector': 'td',
-                    'props': [('border-style', 'solid'),
-                            ('border-width', '0px 0px 1px 0px'),
-                            ('border-color', 'black'),
-                            ('text-align', 'center')]
-                }, {
-                    'selector': 'th',
-                    'props': [('border-style', 'solid'),
-                            ('border-width', '0px 0px 1px 0px'),
-                            ('border-color', 'black'),
-                            ('text-align', 'left'),]
-                }]
-            ).set_properties(**{'padding': '2px',
-                                'font-size': '15px'})
-
-        # Exibindo no Streamlit
-        def main():
-            styled_html = style_table(coef_df).to_html(index=False, escape=False)
-            centered_html = f'''
-            <div style="display: flex; justify-content: left;">
-                {styled_html}
-            '''  # Fechar corretamente a tag div
-            st.markdown(centered_html, unsafe_allow_html=True)
-
-        if __name__ == '__main__':
-            main()                
-        
-
-# Previsão na Amostra de Teste
-if 'model_trained' in st.session_state and st.session_state.model_trained:
-    st.header("Analisar Potenciais Tomadores de Empréstimo")
-    
-    st.write("""
-    Agora você pode analisar potenciais tomadores de empréstimo usando o modelo treinado.
-    O modelo usará as mesmas variáveis que você selecionou para treinamento.
-    """)
-    
-    # Verificar se as variáveis necessárias existem na amostra de teste
-    missing_features = [f for f in st.session_state.original_features if f not in testing_sample.columns]
-    
-    if missing_features:
-        st.error(f"A amostra de teste está faltando variáveis necessárias: {', '.join(missing_features)}")
-    else:
-        if st.button("Analisar Potenciais Tomadores de Empréstimo", key=2):
-            with st.spinner("Analisando potenciais tomadores de empréstimo..."):
-                # Preparar dados de teste usando as mesmas variáveis
-                X_potential = testing_sample[st.session_state.original_features]
+                # Calcular métricas adicionais
+                from sklearn.metrics import precision_score, recall_score, f1_score
+                precision = precision_score(y_true_production, y_pred_co, zero_division=0)
+                recall = recall_score(y_true_production, y_pred_co, zero_division=0)
+                f1 = f1_score(y_true_production, y_pred_co, zero_division=0)
                 
-                # Fazer previsões
-                potential_proba = st.session_state.model.predict_proba(X_potential)[:, 1]
-
-                # Obter limiar do usuário
-                user_threshold = st.session_state.get('decision_threshold')
-                potential_pred = (potential_proba >= user_threshold).astype(int)  # Usar limiar do usuário
+                aprovacao_rate = (1 - y_pred_co.mean()) * 100
                 
-                # Adicionar previsões à amostra de teste
-                results_df = testing_sample.copy()
-                results_df['probabilidade_prevista'] = potential_proba
-                results_df['status_previsto'] = potential_pred
-                
-                # Armazenar previsões para comparação posterior
-                st.session_state.prediction_results = results_df
-                
-                # Exibir resultados
-                st.subheader("Resultados das Previsões")
-                
-                # Estatísticas resumidas
-                approved_count = (potential_pred == 0).sum()
-                rejected_count = (potential_pred == 1).sum()
-                
-                col1, col2 = st.columns(2)
-                with col1:
-                    st.metric("Empréstimos Aprovados", f"{approved_count} ({approved_count/len(potential_pred)*100:.1f}%)")
-                with col2:
-                    st.metric("Empréstimos Rejeitados", f"{rejected_count} ({rejected_count/len(potential_pred)*100:.1f}%)")
-                
-                # Distribuição de probabilidades previstas
-                st.subheader("Distribuição das Probabilidades de Inadimplência")
-                fig, ax = plt.subplots(figsize=(10, 6))
-                
-                sns.histplot(potential_proba, bins=50, kde=True, ax=ax)
-                ax.axvline(x=decision_threshold, color='red', linestyle='--')
-                ax.text(decision_threshold+0.02, ax.get_ylim()[1]*0.9, f'Limiar de Decisão ({decision_threshold:.2f})', color='red')
-                ax.set_xlabel('Probabilidade Prevista de Inadimplência')
-                ax.set_ylabel('Contagem')
-                ax.set_title('Distribuição das Probabilidades Previstas de Inadimplência')
-                
-                col1, col2, col3 = st.columns([1, 6, 1])
-                with col2:
-                    st.pyplot(fig)        
-                
-                # Exibir tabela de resultados
-                st.subheader("Resultados Detalhados")
-                st.dataframe(results_df.sort_values('probabilidade_prevista', ascending=False))
-                
-                # Opção de download
-                csv = results_df.to_csv(index=False)
-                st.download_button(
-                    label="Baixar Resultados como CSV",
-                    data=csv,
-                    file_name='previsoes_potenciais_tomadores.csv',
-                    mime='text/csv',
-                )
-                
-                # Análise por nível de risco
-                st.subheader("Análise por Nível de Risco")
-                
-                # Criar níveis de risco
-                bins = [0, 0.2, 0.4, 0.6, 0.8, 1.0]
-                labels = ['Risco Muito Baixo', 'Risco Baixo', 'Risco Moderado', 'Risco Alto', 'Risco Muito Alto']
-                results_df['nivel_risco'] = pd.cut(results_df['probabilidade_prevista'], bins=bins, labels=labels)
-                
-                # Contar por nível
-                tier_counts = results_df['nivel_risco'].value_counts().sort_index()
-                
-                # Exibir como gráfico de barras
-                fig, ax = plt.subplots(figsize=(10, 6))
-                tier_counts.plot(kind='bar', ax=ax, color=plt.cm.RdYlGn_r(np.linspace(0, 1, len(labels))))
-                ax.set_xlabel('Nível de Risco')
-                ax.set_ylabel('Número de Potenciais Tomadores de Empréstimo')
-                ax.set_title('Distribuição de Potenciais Tomadores por Nível de Risco')
-                
-                for i, v in enumerate(tier_counts):
-                    ax.text(i, v + 5, f"{v} ({v/len(results_df)*100:.1f}%)", ha='center')
-                
-                col1, col2, col3 = st.columns([1, 6, 1])
-                with col2:
-                    st.pyplot(fig)        
-
-    # Comparar previsões com resultados reais
-    st.header("Comparar Previsões com Resultados Reais")
-    
-    st.write("""
-    Esta seção compara as previsões do modelo com os resultados reais dos empréstimos
-    do arquivo testing_sample_true.csv.
-    """)
-    
-    # Função para carregar os dados verdadeiros de teste
-    @st.cache_data
-    def load_true_testing_data():
-        try:
-            # Tentar carregar o arquivo real
-            testing_sample_true = pd.read_csv('testing_sample_true.csv')
-            return testing_sample_true
-        except:
-            # Criar dados sintéticos de verdade para demonstração
-            st.warning("Usando dados sintéticos de verdade. Em produção, conecte-se ao testing_sample_true.csv real")
-            if 'prediction_results' in st.session_state:
-                # Usar IDs dos resultados de previsão
-                ids = st.session_state.prediction_results['id'].values
-                n = len(ids)
-                
-                # Gerar verdade sintética correlacionada com nossas previsões
-                # mas não perfeitamente correspondente (taxa de concordância de 80%)
-                if 'model' in st.session_state:
-                    # Para demonstração: fazer verdade sintética parcialmente correlacionada com previsões do modelo
-                    predicted_probs = st.session_state.prediction_results['probabilidade_prevista'].values
-                    
-                    # Adicionar algum ruído às probabilidades
-                    noisy_probs = predicted_probs + np.random.normal(0, 0.15, n)
-                    noisy_probs = np.clip(noisy_probs, 0, 1)
-                    
-                    # Converter para resultados binários
-                    synthetic_outcomes = (noisy_probs > 0.5).astype(int)
-                else:
-                    # Se não há previsões do modelo disponíveis, gerar resultados aleatórios com distribuição realista
-                    synthetic_outcomes = np.random.binomial(1, 0.2, n)  # Taxa de inadimplência de 20%
-                
-                return pd.DataFrame({
-                    'id': ids,
-                    'loan_status': synthetic_outcomes
+                comparison_results.append({
+                    'Cut-off': f"{co:.1%}",
+                    'Acurácia': f"{acc:.3f}",
+                    'Precisão': f"{precision:.3f}",
+                    'Recall': f"{recall:.3f}",
+                    'F1-Score': f"{f1:.3f}",
+                    'Taxa Aprovação': f"{aprovacao_rate:.1f}%"
                 })
-    
-    # Carregar os resultados verdadeiros
-    testing_sample_true = load_true_testing_data()
-    
-    if 'prediction_results' not in st.session_state:
-        st.info("Por favor, execute 'Analisar Potenciais Tomadores de Empréstimo' primeiro para gerar previsões.")
-    else:
-        # Mesclar previsões com resultados verdadeiros
-        comparison_df = st.session_state.prediction_results[['id', 'status_previsto', 'probabilidade_prevista']].merge(
-            testing_sample_true[['id', 'loan_status']], 
-            on='id',
-            how='inner'
-        )
-        
-        if len(comparison_df) == 0:
-            st.error("Não foi possível corresponder nenhuma previsão com resultados verdadeiros. Verifique se os IDs correspondem entre os conjuntos de dados.")
-        else:
-            st.success(f"Correspondência bem-sucedida de {len(comparison_df)} empréstimos entre previsões e resultados reais.")
             
-            # Calcular métricas
-            from sklearn.metrics import accuracy_score, precision_score, recall_score, f1_score, roc_auc_score
+            comparison_df = pd.DataFrame(comparison_results)
             
-            accuracy = accuracy_score(comparison_df['loan_status'], comparison_df['status_previsto'])
-            precision = precision_score(comparison_df['loan_status'], comparison_df['status_previsto'])
-            recall = recall_score(comparison_df['loan_status'], comparison_df['status_previsto'])
-            f1 = f1_score(comparison_df['loan_status'], comparison_df['status_previsto'])
-            roc_auc = roc_auc_score(comparison_df['loan_status'], comparison_df['probabilidade_prevista'])
+            # Destacar o cut-off atual
+            current_cutoff_str = f"{cutoff:.1%}"
             
-            # Exibir métricas
-            st.subheader("Desempenho do Modelo nos Dados de Teste")
+            st.write("**Comparação de Performance com Diferentes Cut-offs:**")
+            
+            # Usar cores para destacar o cut-off atual
+            def highlight_current_cutoff(row):
+                if row['Cut-off'] == current_cutoff_str:
+                    return ['background-color: lightgreen'] * len(row)
+                return [''] * len(row)
+            
+            styled_df = comparison_df.style.apply(highlight_current_cutoff, axis=1)
+            st.dataframe(styled_df)
+            
+            st.info(f"💡 Cut-off atual ({current_cutoff_str}) destacado em verde na tabela acima.")
+            
+            # Matriz de confusão para produção
+            st.subheader("🔍 Matriz de Confusão - Produção")
+            cm_prod_fig = plot_confusion_matrix(
+                y_true_production, 
+                y_pred_production, 
+                f"Matriz de Confusão - Produção (Cut-off: {cutoff:.2%})"
+            )
+            st.plotly_chart(cm_prod_fig, use_container_width=True)
+            
+            # Métricas de produção
+            st.subheader("📊 Métricas de Produção")
+            
+            accuracy_prod = accuracy_score(y_true_production, y_pred_production)
             
             col1, col2, col3 = st.columns(3)
+            
             with col1:
-                st.metric("Acurácia", f"{accuracy:.4f}")
-                st.metric("F1 Score", f"{f1:.4f}")
+                st.metric("Acurácia em Produção", f"{accuracy_prod:.4f}")
+            
             with col2:
-                st.metric("Precisão", f"{precision:.4f}")
-                st.metric("ROC-AUC", f"{roc_auc:.4f}")
+                roc_auc_prod = auc(*roc_curve(y_true_production, y_pred_proba_production)[:2])
+                st.metric("AUC em Produção", f"{roc_auc_prod:.4f}")
+            
             with col3:
-                st.metric("Recall", f"{recall:.4f}")
+                st.metric("Cut-off Aplicado", f"{cutoff:.2%}")
             
-            # Adicionar explicação das métricas
-            with st.expander("Entenda essas métricas"):
-                st.markdown("""
-                - **Acurácia**: Porcentagem de previsões corretas (tanto empréstimos pagos quanto inadimplentes)
-                - **Precisão**: Porcentagem de inadimplências previstas que eram inadimplências reais (menos falsos positivos)
-                - **Recall**: Porcentagem de inadimplências reais que foram corretamente previstas (menos falsos negativos)
-                - **F1 Score**: Média harmônica de precisão e recall
-                - **ROC-AUC**: Área sob a curva ROC, mede a capacidade do modelo de distinguir entre classes
-                
-                Na modelagem de risco de crédito, diferentes métricas podem ser priorizadas dependendo dos objetivos de negócio:
-                - **Precisão** mais alta significa menos empréstimos bons são incorretamente rejeitados
-                - **Recall** mais alto significa menos empréstimos ruins são incorretamente aprovados
-                """)
+            # Relatório de classificação para produção
+            st.subheader("📋 Relatório de Classificação - Produção")
+            report_prod = classification_report(y_true_production, y_pred_production, output_dict=True)
+            report_prod_df = pd.DataFrame(report_prod).transpose()
+            st.dataframe(report_prod_df.round(4))
             
-            # Matriz de confusão
-            st.subheader("Matriz de Confusão")
-            cm = confusion_matrix(comparison_df['loan_status'], comparison_df['status_previsto'])
+            # Curva ROC para produção
+            st.subheader("📊 Curva ROC - Produção")
+            roc_prod_fig, _ = plot_roc_curve(y_true_production, y_pred_proba_production)
+            st.plotly_chart(roc_prod_fig, use_container_width=True)
             
-            fig, ax = plt.subplots(figsize=(10, 8))
-            sns.heatmap(cm, annot=True, fmt='d', cmap='Blues', ax=ax,
-                        xticklabels=['Previsto Pago', 'Previsto Inadimplente'],
-                        yticklabels=['Realmente Pago', 'Realmente Inadimplente'])
-            ax.set_xlabel('Rótulo Previsto')
-            ax.set_ylabel('Rótulo Verdadeiro')
-            ax.set_title('Matriz de Confusão nos Dados de Teste')
-            col1, col2, col3 = st.columns([1, 6, 1])
-            with col2:
-                st.pyplot(fig)        
-            
-            # Análise de erros
-            st.subheader("Análise de Erros")
-            
-            # Adicionar categorias de erro
-            comparison_df['categoria_resultado'] = 'Desconhecido'
-            comparison_df.loc[(comparison_df['status_previsto'] == 0) & (comparison_df['loan_status'] == 0), 'categoria_resultado'] = 'Verdadeiro Negativo (Pagamento Corretamente Previsto)'
-            comparison_df.loc[(comparison_df['status_previsto'] == 1) & (comparison_df['loan_status'] == 1), 'categoria_resultado'] = 'Verdadeiro Positivo (Inadimplência Corretamente Prevista)'
-            comparison_df.loc[(comparison_df['status_previsto'] == 1) & (comparison_df['loan_status'] == 0), 'categoria_resultado'] = 'Falso Positivo (Inadimplência Incorretamente Prevista)'
-            comparison_df.loc[(comparison_df['status_previsto'] == 0) & (comparison_df['loan_status'] == 1), 'categoria_resultado'] = 'Falso Negativo (Pagamento Incorretamente Previsto)'
-            
-            # Contar por categoria
-            result_counts = comparison_df['categoria_resultado'].value_counts()
-            
-            # Exibir como gráfico de pizza
-            fig, ax = plt.subplots(figsize=(10, 8))
-            colors = ['#4CAF50', '#2196F3', '#FFC107', '#F44336']
-            result_counts.plot(kind='pie', autopct='%1.1f%%', ax=ax, colors=colors, textprops={'fontsize': 14})
-            ax.set_ylabel('')
-            ax.set_title('Distribuição dos Resultados de Previsão')
-            col1, col2, col3 = st.columns([1, 6, 1])
-            with col2:
-                st.pyplot(fig)        
-            
-            # Curva ROC
-            st.subheader("Curva ROC nos Dados de Teste")
-            fpr, tpr, _ = roc_curve(comparison_df['loan_status'], comparison_df['probabilidade_prevista'])
-            
-            fig, ax = plt.subplots(figsize=(10, 6))
-            ax.plot(fpr, tpr, 'b-', linewidth=2, label=f'Curva ROC (AUC = {roc_auc:.3f})')
-            ax.plot([0, 1], [0, 1], 'r--', linewidth=1, label='Classificador Aleatório')
-            ax.set_xlabel('Taxa de Falsos Positivos (1 - Especificidade)')
-            ax.set_ylabel('Taxa de Verdadeiros Positivos (Sensibilidade)')
-            ax.set_title('Curva ROC (Receiver Operating Characteristic) nos Dados de Teste')
-            ax.legend(loc='lower right')
-            ax.grid(True, alpha=0.3)
-            col1, col2, col3 = st.columns([1, 6, 1])
-            with col2:
-                st.pyplot(fig)        
-            
-            # Análise detalhada de erros - mostrar os principais casos mal classificados
-            st.subheader("Principais Casos Mal Classificados")
-            
-            # Falsos Positivos (erros Tipo I) - empréstimos bons rejeitados
-            st.markdown("### Falsos Positivos (Empréstimos bons incorretamente previstos como inadimplentes)")
-            fp_df = comparison_df[comparison_df['categoria_resultado'] == 'Falso Positivo (Inadimplência Incorretamente Prevista)'].sort_values('probabilidade_prevista', ascending=False)
-            if len(fp_df) > 0:
-                st.dataframe(fp_df.head(10))
-            else:
-                st.info("Nenhum falso positivo encontrado.")
-                
-            # Falsos Negativos (erros Tipo II) - empréstimos ruins aprovados
-            st.markdown("### Falsos Negativos (Empréstimos ruins incorretamente previstos como pagamentos)")
-            fn_df = comparison_df[comparison_df['categoria_resultado'] == 'Falso Negativo (Pagamento Incorretamente Previsto)'].sort_values('probabilidade_prevista')
-            if len(fn_df) > 0:
-                st.dataframe(fn_df.head(10))
-            else:
-                st.info("Nenhum falso negativo encontrado.")
-            
-            # Análise de impacto nos negócios
-            st.subheader("Análise de Impacto nos Negócios")
-            
-            # Na modelagem de crédito, falsos negativos (aprovar empréstimos ruins) tipicamente custam mais que
-            # falsos positivos (rejeitar empréstimos bons)
-            fn_count = len(fn_df)
-            fp_count = len(fp_df)
-            
-            # Estimar custos (para demonstração)
-            avg_loan_amount = testing_sample['loan_amnt'].mean() if 'loan_amnt' in testing_sample.columns else 10000
-            
-            # Assumir taxa de perda em inadimplências de cerca de 70% do principal
-            estimated_fn_loss = fn_count * avg_loan_amount * 0.7
-            
-            # Assumir custo de oportunidade em falsos positivos de cerca de 10% do lucro potencial
-            estimated_fp_loss = fp_count * avg_loan_amount * 0.1
-            
-            st.markdown(f"""
-            ### Impacto Financeiro Estimado
-            
-            Baseado em um modelo de custo simples:
-            
-            - **Falsos Negativos (Aprovar empréstimos ruins):**
-              - Contagem: {fn_count}
-              - Perda estimada: R${estimated_fn_loss:,.2f}
-              
-            - **Falsos Positivos (Rejeitar empréstimos bons):**
-              - Contagem: {fp_count}
-              - Custo de oportunidade estimado: R${estimated_fp_loss:,.2f}
-              
-            - **Impacto total estimado:** R${estimated_fn_loss + estimated_fp_loss:,.2f}
-            
-            Nota: Esta é uma estimativa simplificada para fins de demonstração. O impacto financeiro real
-            exigiria análise mais complexa incorporando taxas de juros, taxas de recuperação, custos operacionais
-            e custos de oportunidade.
-            """)
-            
-            # Análise de limiar
-            st.subheader("Análise do Limiar de Decisão")
-            
-            # Calcular métricas em diferentes limiares
-            thresholds = np.linspace(0.1, 0.9, 9)
-            threshold_results = []
-            
-            for threshold in thresholds:
-                pred_at_threshold = (comparison_df['probabilidade_prevista'] >= threshold).astype(int)
-                acc = accuracy_score(comparison_df['loan_status'], pred_at_threshold)
-                prec = precision_score(comparison_df['loan_status'], pred_at_threshold)
-                rec = recall_score(comparison_df['loan_status'], pred_at_threshold)
-                f1_score_val = f1_score(comparison_df['loan_status'], pred_at_threshold)
-                
-                # Contar FP e FN neste limiar
-                fp = ((pred_at_threshold == 1) & (comparison_df['loan_status'] == 0)).sum()
-                fn = ((pred_at_threshold == 0) & (comparison_df['loan_status'] == 1)).sum()
-                
-                # Custos estimados
-                fn_cost = fn * avg_loan_amount * 0.7
-                fp_cost = fp * avg_loan_amount * 0.1
-                total_cost = fn_cost + fp_cost
-                
-                threshold_results.append({
-                    'Limiar': threshold,
-                    'Acurácia': acc,
-                    'Precisão': prec,
-                    'Recall': rec,
-                    'F1 Score': f1_score_val,
-                    'Falsos Positivos': fp,
-                    'Falsos Negativos': fn,
-                    'Custo Estimado': total_cost
-                })
-            
-            threshold_df = pd.DataFrame(threshold_results)
-            
-            # Plotar métricas vs limiar
-            fig, ax1 = plt.subplots(figsize=(12, 6))
-            
-            # Plotar métricas
-            ax1.set_xlabel('Limiar de Decisão')
-            ax1.set_ylabel('Valor da Métrica')
-            ax1.plot(threshold_df['Limiar'], threshold_df['Acurácia'], 'g-', label='Acurácia')
-            ax1.plot(threshold_df['Limiar'], threshold_df['Precisão'], 'b-', label='Precisão')
-            ax1.plot(threshold_df['Limiar'], threshold_df['Recall'], 'r-', label='Recall')
-            ax1.plot(threshold_df['Limiar'], threshold_df['F1 Score'], 'y-', label='F1 Score')
-            ax1.tick_params(axis='y')
-            ax1.legend(loc='center left')
-            ax1.grid(True, alpha=0.3)
-            
-            # Plotar custo estimado no eixo secundário
-            ax2 = ax1.twinx()
-            ax2.set_ylabel('Custo Estimado (R$)', color='purple')
-            ax2.plot(threshold_df['Limiar'], threshold_df['Custo Estimado'], 'm--', label='Custo Est.')
-            ax2.tick_params(axis='y', labelcolor='purple')
-            
-            fig.tight_layout()
-            ax1.set_title('Impacto do Limiar de Probabilidade no Desempenho do Modelo e Custo')
-            
-            # Adicionar marcador do limiar ótimo
-            optimal_idx = threshold_df['Custo Estimado'].idxmin()
-            optimal_threshold = threshold_df.loc[optimal_idx, 'Limiar']
-            ax1.axvline(x=optimal_threshold, color='black', linestyle='--', alpha=0.7)
-            ax1.text(optimal_threshold+0.02, 0.5, f'Limiar ótimo: {optimal_threshold:.2f}', 
-                    transform=ax1.get_xaxis_transform(), fontsize=10)
-            
-            col1, col2, col3 = st.columns([1, 6, 1])
-            with col2:
-                st.pyplot(fig)        
-            
-            st.markdown(f"""
-            ### Limiar de Decisão Ótimo
-            
-            Baseado na análise de custo, o limiar de decisão ótimo é aproximadamente **{optimal_threshold:.2f}**
-            (comparado ao limiar padrão de 0.5).
-            
-            Neste limiar:
-            - Acurácia: {threshold_df.loc[optimal_idx, 'Acurácia']:.4f}
-            - Precisão: {threshold_df.loc[optimal_idx, 'Precisão']:.4f}
-            - Recall: {threshold_df.loc[optimal_idx, 'Recall']:.4f}
-            - Custo estimado: R${threshold_df.loc[optimal_idx, 'Custo Estimado']:,.2f}
-            
-            **Recomendação de negócio:** Considere ajustar o limiar de decisão baseado nas prioridades
-            específicas do negócio e apetite ao risco. Um limiar mais alto reduz inadimplências mas aprova menos empréstimos,
-            enquanto um limiar mais baixo aprova mais empréstimos mas aumenta o risco de inadimplência.
-            """)
-            
-            # Baixar resultados de comparação
-            st.download_button(
-                label="Baixar Resultados de Comparação",
-                data=comparison_df.to_csv(index=False),
-                file_name="comparacao_previsao_vs_real.csv",
-                mime="text/csv"
-            )
+        else:
+            st.info("⚠️ Os dados de produção não contêm a variável 'loan_status' para comparação.")
+    
+    with tab4:
+        st.header("📋 Visualização dos Dados")
+        
+        # Dados de treinamento
+        st.subheader("🔧 Dados de Treinamento")
+        st.write(f"Shape: {training_data.shape}")
+        st.dataframe(training_data.head())
+        
+        # Dados de produção
+        st.subheader("🎯 Dados de Produção")
+        st.write(f"Shape: {production_data.shape}")
+        st.dataframe(production_data.head())
+        
+        # Estatísticas descritivas
+        st.subheader("📊 Estatísticas Descritivas")
+        st.write("**Dados de Treinamento:**")
+        st.dataframe(training_data[selected_features].describe())
+    
+    with tab5:
+        st.header("ℹ️ Informações sobre o Sistema")
+        
+        st.markdown("""
+        ### 🎯 Objetivo
+        Este sistema foi desenvolvido para ensinar aos estagiários como funciona a modelagem de risco de crédito utilizando regressão logística.
+        
+        ### 📊 Funcionalidades
+        1. **Seleção de Variáveis**: Permite escolher quais variáveis usar no modelo
+        2. **Treinamento do Modelo**: Treina um modelo de regressão logística com divisão 70/30
+        3. **Visualizações**: Gera gráficos da curva S, ROC e matriz de confusão
+        4. **Estatísticas**: Exibe métricas detalhadas do modelo
+        5. **Aplicação em Produção**: Aplica o modelo em novos dados
+        6. **Comparação**: Compara resultados com dados reais (quando disponíveis)
+        
+        ### 🔧 Tecnologias Utilizadas
+        - **Streamlit**: Interface web interativa
+        - **Scikit-learn**: Algoritmos de machine learning
+        - **Plotly**: Visualizações interativas
+        - **Pandas**: Manipulação de dados
+        
+        ### 📈 Interpretação dos Resultados
+        - **AUC > 0.8**: Modelo excelente
+        - **AUC 0.7-0.8**: Modelo bom
+        - **AUC 0.6-0.7**: Modelo regular
+        - **AUC < 0.6**: Modelo ruim
+        
+        ### 👥 Desenvolvido para
+        Departamento de Crédito - Treinamento de Estagiários
+        """)
 
-
-# Rodapé com dicas para novos usuários
-st.markdown("---")
-st.markdown("""
-**Como usar esta ferramenta:**
-1. Comece selecionando as variáveis nas caixas de seleção
-2. Clique em "Treinar Modelo de Regressão Logística" para ver os resultados
-3. Analise o desempenho e as estatísticas do modelo
-4. Utilize o modelo para analisar potenciais tomadores de empréstimo
-""")
-
-# Rodapé
-st.divider()
-st.caption("© 2025 Ferramenta de Modelagem de Risco de Crédito | Desenvolvida com propósitos pedagógicos")
-st.caption("Prof. José Américo – Coppead")
+if __name__ == "__main__":
+    main()
