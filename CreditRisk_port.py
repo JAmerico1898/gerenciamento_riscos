@@ -28,31 +28,42 @@ st.markdown("---")
 variable_descriptions = {
     'unnamed:0': 'Index',
     'id': 'Identificação da operação de crédito',
-    'loan_amnt': 'Valor da operação de crédito',
-    'int_rate': 'Taxa de juros da operação de crédito',
-    'annual_inc': 'Renda anual do devedor da operação de crédito',
+    'acc_open_past_24mths': 'Número de tentativas de empréstimo nos últimos 24 meses',
+    'addr_state': 'Estado de residência indicado pelo tomador de crédito no momento do pleito',
+    'application_type':	'Informa se o empréstimo é individual ou conjunto para dois co-tomadores',
+    'avg_cur_bal': 'Saldo corrente médio de todos os empréstimos',
+    'bc_open_to_buy': 'Limite total disponível para utilização em cartões de crédito rotativos (revolving)',
+    'bc_util': 'Relação entre o saldo total atual e o limite máximo de crédito em todas as contas de cartão de crédito',
     'dti': 'Razão entre os pagamentos mensais de operações de crédito pelo devedor da operação de crédito e a renda do devedor da operação de crédito',
-    'delinq_2yrs': 'Número de atrasos superiores a 30 dias no histórico de pagamentos do devedor da operação de crédito, ocorridos nos últimos 2 anos',
-    'fico_range_low': 'Credit scoring do devedor da operação de crédito no momento da originação da operação de crédito',
-    'grade_A': 'True, se classificação de risco "A" atribuída ao devedor da operação de crédito. False, otherwise',
-    'grade_B': 'True, classificação de risco "B" atribuída ao devedor da operação de crédito. False, otherwise',
-    'grade_C': 'True, classificação de risco "C" atribuída ao devedor da operação de crédito. False, otherwise',
-    'grade_D': 'True, classificação de risco "D" atribuída ao devedor da operação de crédito. False, otherwise',
-    'grade_E': 'True, classificação de risco "E" atribuída ao devedor da operação de crédito. False, otherwise',
-    'grade_F': 'True, classificação de risco "F" atribuída ao devedor da operação de crédito. False, otherwise',
-    'grade_G': 'True, classificação de risco "G" atribuída ao devedor da operação de crédito. False, otherwise',
+    'earliest_cr_line': 'Mês de abertura da linha de crédito mais antiga registrada do tomador',
+    'fico_score': 'Credit scoring do devedor da operação de crédito no momento da originação da operação de crédito',
+    'funded_amnt': 'Valor total comprometido (ou financiado) naquele empréstimo até aquele momento',
+    'grade': 'Grau de risco atribuído pelo Lending Club ao empréstimo',
+    'home_ownership': 'Situação de propriedade do domicílio informada pelo tomador no momento do cadastro ou obtida do relatório de crédito. Os valores possíveis são: ALUGADO, PRÓPRIO, FINANCIADO, OUTROS.',
+    'initial_list_status': 'Status inicial de listagem do empréstimo. Valores possíveis: W (em espera) e F (financiado)',
+    'installment': 'Valor da prestação mensal devida pelo tomador caso o empréstimo seja efetivamente originado',
+    'int_rate': 'Taxa de juros da operação de crédito',
+    'loan_amnt': 'Valor da operação de crédito',
+    'log_annual_inc': 'Logaritmo natural da renda anual informada pelo tomador de crédito no momento do pleito',
+    'mo_sin_old_rev_tl_op': 'Número de meses desde a abertura da conta rotativa mais antiga do tomador',
+    'mo_sin_rcnt_rev_tl_op': 'Número de meses desde a abertura da conta rotativa mais recente do tomador',             
+    'mort_acc': 'Número de contas de financiamento imobiliário (hipotecas) mantidas pelo tomador',
+    'num_actv_rev_tl': 'Número de contas rotativas atualmente ativas',
+    'purpose': 'Categoria informada pelo tomador para justificar o propósito do empréstimo',    
+    'revol_util': 'Taxa de utilização de crédito rotativo, ou seja, a proporção do crédito disponível que o tomador está efetivamente utilizando',
     'loan_status': 'Status atual da operação de crédito: operação de crédito em dia (loan_status = 0); operação de crédito em atraso (loan_status = 1)'
 }
-
+	
+	
 # Função para carregar dados
 @st.cache_data
 def load_data():
     try:
         training_data = pd.read_csv('training_sample.csv')
-        production_data = pd.read_csv('production_sample.csv')
+        production_data = pd.read_csv('testing_sample_true.csv')
         return training_data, production_data
     except FileNotFoundError:
-        st.error("Arquivos CSV não encontrados. Certifique-se de que 'training_sample.csv' e 'production_sample.csv' estão no diretório correto.")
+        st.error("Arquivos CSV não encontrados. Certifique-se de que 'training_sample.csv' e 'testing_sample_true.csv' estão no diretório correto.")
         return None, None
 
 # Função para plotar a curva S da regressão logística
@@ -399,12 +410,12 @@ def display_regression_equation(model, selected_features):
             if coef_val != 0:
                 change_pct = (exp_coef - 1) * 100
                 if coef_val > 0:
-                    interpretation = f"Cada aumento unitário em **{feature}** multiplica as chances de inadimplência por **{exp_coef:.3f}** (aumento de {change_pct:+.1f}%)"
+                    interpretation = f"Cada aumento unitário em **{feature}** multiplica as chances de inadimplência por **{exp_coef:.4f}**, representando um aumento de **{change_pct:+.1f}%** nas odds"
                 else:
-                    interpretation = f"Cada aumento unitário em **{feature}** multiplica as chances de inadimplência por **{exp_coef:.3f}** (redução de {abs(change_pct):.1f}%)"
+                    interpretation = f"Cada aumento unitário em **{feature}** multiplica as chances de inadimplência por **{exp_coef:.4f}**, representando uma redução de **{abs(change_pct):.1f}%** nas odds"
             else:
                 interpretation = f"**{feature}** não tem impacto significativo na probabilidade de inadimplência"
-            
+                            
             # Exibir interpretação
             st.markdown(f"""
             **{effect_icon} {feature}**
@@ -428,13 +439,13 @@ def main():
     
     # Listar variáveis disponíveis (excluindo target e id)
     available_features = [col for col in training_data.columns 
-                         if col not in ['loan_status', 'id', 'unnamed:0']]
+                         if col not in ['loan_status', 'id', 'Unnamed: 0']]
     
     # Seleção de variáveis
     selected_features = st.multiselect(
         "Selecione as variáveis para o modelo:",
         available_features,
-        default=['loan_amnt', 'int_rate', 'annual_inc', 'fico_range_low'],
+        default=['loan_amnt', 'int_rate', 'log_annual_inc', 'fico_score', 'funded_amnt'],
         help="Selecione as variáveis que serão utilizadas no modelo de regressão logística"
     )
     
@@ -480,9 +491,9 @@ def main():
     with col2:
         st.metric("Cut-off Selecionado", f"{cutoff:.2%}")
         if cutoff < 0.3:
-            st.warning("⚠️ Cut-off baixo: Muitas aprovações")
+            st.warning("⚠️ Cut-off baixo: Muitas negações")
         elif cutoff > 0.7:
-            st.warning("⚠️ Cut-off alto: Muitas negações")
+            st.warning("⚠️ Cut-off alto: Muitas aprovações")
         else:
             st.success("✅ Cut-off equilibrado")
     
